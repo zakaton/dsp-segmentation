@@ -1,0 +1,1491 @@
+<html>
+    <style>
+        * {
+            font-family:'Courier New', Courier, monospace;
+        }
+        signal-waveform {
+            display : flex;
+            flex-direction: column;
+            border : solid;
+            user-select : none;
+            width : 100%;
+            height : 100px;
+        }
+        signal-segmented {
+            display : flex;
+            flex-direction: row;
+            user-select : none;
+            width : 100%;
+            height : 30px
+        }
+        signal-grid {
+            display : grid;
+            border : solid;
+            user-select : none;
+        }
+
+        #slides > :not([data-current-slide="true"]) {
+            display : none;
+        }
+
+        [data-hidden="true"] {
+            display : none;
+        }
+
+    </style>
+
+    <script>
+        class Signal extends Array {
+            clip(min = -Infinity, max = Infinity) {
+                return this.map(value => Math.min(Math.max(value, min), max));
+            }
+            positives() {
+                return this.clip(0);
+            }
+            negatives() {
+                return this.clip(undefined, 0);
+            }
+            min() {
+                return this.reduce((min, value) => (value < min)? value:min, this[0]);
+            }
+            abs() {
+                return this.map(value => Math.abs(value));
+            }
+            max() {
+                return this.reduce((max, value) => (value > max)? value:max, this[0]);
+            }
+            unsignedMax() {
+                return this.abs().max();
+            }
+            integral() {
+                return this.reduce((integral, value) => {
+                    return integral+value;
+                }, 0);
+            }
+            unsignedIntegral() {
+                return this.reduce((integral, value) => {
+                    return integral+Math.abs(value);
+                }, 0);
+            }
+            scale(scalar) {
+                this.forEach((value, index) => {
+                    this[index] = value*scalar;
+                });
+            }
+            dot(signal) {
+                return this.reduce((dot, value, index) => {
+                    return dot + (value * signal[index]);
+                }, 0);
+            }
+            convolve(signal) {
+                const offset = signal.length-1;
+                return this.operate(signal,
+                    (index1, index2) => index1-index2+offset,
+                    (value1, value2) => value1*value2,
+                );
+            }
+            crossConvolve(signal) {
+                return this.convolve(new Signal(...signal).reverse());
+            }
+
+            copy(signal) {
+                const length = Math.max(this.length, signal.length);
+                for(let index = 0; index < length; index++) {
+                    delete this[index];
+
+                    if(signal[index] !== undefined)
+                        this[index] = signal[index];
+                }
+            }
+
+            operate(signal, getIndex, getValue = (v1, v2) => (v1*v2)) {
+                const convolution = new Signal();
+
+                this.forEach((value1, index1) => {
+                    signal.forEach((value2, index2) => {
+                        const value = getValue(value1, value2);
+                        const index = getIndex(index1, index2);
+
+                        if(convolution[index] == undefined)
+                            convolution[index] = 0;
+
+                        convolution[index] += value;
+                    });
+                });
+                return convolution;
+            }
+
+            DFT(cos = true) {
+                const DFT = new Signal(this.length);
+                DFT.fill(0);
+
+                for(let index = 0; index < this.length; index++) {
+                    const waveform = cos?
+                        Signal.cos(index, this.length) :
+                        Signal.sin(index, this.length) ;
+                    DFT[index] = this.dot(waveform)/(this.length/2);
+                }
+
+                return DFT.map(value => (Math.abs(value) < 0.001)? 0 : value);
+            }
+
+            permute() {
+                var smallestPowerOf2 = 0;
+                while(Math.pow(2, smallestPowerOf2) < this.length)
+                    smallestPowerOf2++;
+
+                const permutation = new Signal(Math.pow(2, smallestPowerOf2));
+                permutation.fill(0);
+                    
+                this.forEach((value, index) => {
+                    var binaryString = index.toString(2);
+                    const padding = ('0').repeat(smallestPowerOf2 - binaryString.length);
+                    binaryString = padding.concat(binaryString);
+                    const binaryArray = Array.from(binaryString);
+                    binaryArray.reverse();
+                    const reverseBinaryString = binaryArray.join('');
+                    const newIndex = parseInt(reverseBinaryString, 2);
+
+                    permutation[newIndex] = value;
+                });
+
+                this.copy(permutation);
+            }
+
+            static cos(frequency, numberOfSamples) {
+                numberOfSamples = numberOfSamples || 2*frequency;
+                return this.generate(index => Math.cos(frequency*2*Math.PI*index/numberOfSamples), numberOfSamples);
+            }
+
+            static sin(frequency, numberOfSamples) {
+                numberOfSamples = numberOfSamples || 2*frequency;
+                return this.generate(index => Math.sin(frequency*2*Math.PI*index/numberOfSamples), numberOfSamples);
+            }
+
+            static generate(callback, numberOfSamples) {
+                const waveform = new this(numberOfSamples);
+                waveform.fill(0);
+                waveform.forEach((_, index) => {
+                    waveform[index] = callback(index) || 0;
+                });
+                return waveform.map(value => (Math.abs(value) < 0.001)? 0 : value);
+            }
+        }
+    </script>
+
+    <body>
+        <div id="slides">
+            <div data-current-slide="true">>
+                <h1>Waveform</h1>
+
+                <signal-waveform id="slide1Waveform1"></signal-waveform>
+
+                <script>
+                    document.getElementById("slide1Waveform1").addEventListener("load", event => {
+                        {
+                            const length = 50;
+                            for(let index = 0; index < length; index++) {
+                                event.target.signal[index] = 5 * (Math.random() - 0.5);
+                                //event.target.signal[index] = index;
+                            }
+                        }
+                    });
+                </script>
+            </div>
+
+            <div>
+                <h1>Segmented Line</h1>
+
+                <signal-waveform bind-signal="slide1Waveform1"></signal-waveform>
+                <br>
+                <signal-segmented id="slide2Segmented1" bind-signal="slide1Waveform1"></signal-segmented>
+            </div>
+
+            <div>
+                <h1>Examples</h1>
+
+                <h2>Constant</h2>
+                <signal-waveform id="slide3Waveform1"></signal-waveform>
+                <br>
+                <signal-segmented bind-signal="slide3Waveform1"></signal-segmented>
+                <br><br>
+
+                <script>
+                    document.getElementById("slide3Waveform1").addEventListener("load", event => {
+                        {
+                            const length = 30;
+                            for(let index = 0; index < length; index++) {
+                                event.target.signal[index] = 1;
+                            }    
+                        }
+                    });
+                </script>
+
+                <h2>Linear</h2>
+                <signal-waveform id="slide3Waveform2"></signal-waveform>
+                <br>
+                <signal-segmented bind-signal="slide3Waveform2"></signal-segmented>
+                <br><br>
+
+                <script>
+                    document.getElementById("slide3Waveform2").addEventListener("load", event => {
+                        {
+                            const length = 30;
+                            for(let index = 0; index < length; index++) {
+                                event.target.signal[index] = index - ((length-1)/2);
+                            }    
+                        }
+                    });
+                </script>
+
+                <h2>Sinusoidal</h2>
+                <signal-waveform id="slide3Waveform3"></signal-waveform>
+                <br>
+                <signal-segmented bind-signal="slide3Waveform3"></signal-segmented>
+                <br><br>
+
+                <script>
+                    document.getElementById("slide3Waveform3").addEventListener("load", event => {
+                        {
+                            const revolutions = 1;
+                            const length = 50;
+                            for(let index = 0; index < length; index++) {
+                                event.target.signal[index] = Math.sin((2*Math.PI)*revolutions*index/length);
+                            }
+                        }
+                    });
+                </script>
+            </div>
+
+            <div 
+                <h1></h1>
+                <div style="display: grid; grid-gap: 20px; grid-template-columns: 50px 30px 500px 500px; grid-template-rows: 500px 30px 60px;">
+                    
+                    <signal-waveform id="slide4WaveformX" style="grid-column : 3; grid-row : 3; height : 100%"></signal-waveform>
+                    <signal-segmented id="slide4SegmentedX" bind-signal="slide4WaveformX" style="grid-column : 3; grid-row : 2"></signal-segmented>
+
+                    <signal-waveform direction="up" id="slide4WaveformY" style="grid-column: 1; grid-row: 1; height : 100%;"></signal-waveform>
+                    <signal-segmented direction="up" id="slide4SegmentedY" bind-signal="slide4WaveformY" style="grid-column: 2; grid-row: 1; height : 100%;"></signal-segmented>
+
+                    <signal-grid direction-y="up" id="slide4Grid" style="grid-column: 3; grid-row: 1" bind-signal-x="slide4WaveformX" bind-signal-y="slide4WaveformY"></signal-grid>
+
+                    <div style="grid-column: 4; grid-row: 1; display: flex; flex-direction: column; justify-content: space-evenly">
+                        <h1 id=convolutionTitle>Cross Convolution</h2>
+                        <signal-waveform id="slide4Waveform" bind-signal="slide4Grid"></signal-waveform>
+                        <signal-segmented id="slide4Segmented" bind-signal="slide4Grid"></signal-segmented>
+
+                        <h1 id=slide4TitleDFTReal>DFT (real)</h2>
+                        <signal-waveform id="slide4WaveformDFTReal"></signal-waveform>
+                        <signal-segmented id="slide4SegmentedDFTReal" bind-signal="slide4WaveformDFTReal"></signal-segmented>
+
+                        <h1 id=slide4TitleDFTImaginary>DFT (imaginary)</h2>
+                            <signal-waveform id="slide4WaveformDFTImaginary"></signal-waveform>
+                            <signal-segmented id="slide4SegmentedDFTImaginary" bind-signal="slide4WaveformDFTImaginary"></signal-segmented>
+                    </div>
+                </div>
+
+                <script>
+                    const getGridElements = (event, isCrossConvolution = false) => {
+                        const index = Number(event.path[0].dataset.index);
+                        const valueElements = [];
+                        const gridElement = SignalElement.elements().find(element => element instanceof SignalGridElement && element.signal == event.target.signal);
+                        
+                        if(gridElement == undefined) throw `grid not found`;
+
+                        const offset = gridElement.signals.y.length-1;
+                        gridElement.signals.x.forEach((_, indexX) => {
+                            const indexY = isCrossConvolution?
+                                (gridElement.signals.x.length - 1 - indexX) - index + offset :
+                                indexX - index + offset;
+                            //const indexY = indexX - index + offset; // FIX FOR TOGGLING CONVOLUTION!
+                            const valueElement = gridElement.get(indexX, indexY);
+                            if(valueElement !== null)
+                                valueElements.push(valueElement);
+                        });
+                        return valueElements;
+                    }
+
+                    const getElements = (event, isCrossConvolution = false) => {
+                        const element = event.path[0];
+                        const indices = {
+                            x : Number(element.dataset.indexX),
+                            y : Number(element.dataset.indexY),
+                        };
+
+                        const offset = event.target.signals.y.length-1;
+                        //const index = indices.x - indices.y + offset;
+                        const index = isCrossConvolution?
+                            (event.target.signals.x.length - indices.x - 1) - indices.y + offset :
+                            indices.x - indices.y + offset;
+
+                        return SignalElement.get(event.target.signal, index);
+                    }
+
+                    const createRevealer = (...elementss) => {
+                        elementss.forEach(elements => {
+                            elements.forEach(element => {
+                                element.dataset.hidden = true;
+                            });
+                        });
+
+                        var index = 0;
+
+                        window.addEventListener("keydown", event => {
+                            switch(event.key) {
+                                case "ArrowRight":
+                                case "ArrowLeft":
+                                    elementss.flat().forEach(element => element.dataset.hidden = true);
+                                    index = 0;
+                                    break;
+                                case "ArrowUp":
+                                    if(index < elementss.length) {
+                                        elementss[index].forEach(element => delete element.dataset.hidden);
+                                        index++;
+                                    }
+                                    break;
+                                case "ArrowDown":
+                                    if(index > 0) {
+                                        index--;
+                                        elementss[index].forEach(element => element.dataset.hidden = true);
+                                    }
+                                default:
+                                    break;
+                            }
+                        });
+                    }
+
+                    {
+                        const slide4WaveformX = document.getElementById("slide4WaveformX");
+                        const slide4SegmentedX = document.getElementById("slide4SegmentedX");
+
+                        const slide4WaveformY = document.getElementById("slide4WaveformY");
+                        const slide4SegmentedY = document.getElementById("slide4SegmentedY");
+
+                        const X = new Signal();
+                        const Y = new Signal();
+                        const signalLength = 8;
+                        for(let index = 0; index < signalLength; index++) {
+                            X[index] = 1;
+                            Y[index] = 1;
+                            //Y[signalLength-index-1] = index;
+                        }
+
+                        window.addEventListener("keypress", event => {
+                            if(event.key == 'r' || event.key == 'R') {
+                                
+                                [slide4WaveformX, slide4WaveformY].forEach((signalElement, index) => {
+                                    const signal = signalElement.signal;
+                                    if(index == 1 && event.key == 'r') {
+                                        signal.copy(slide4WaveformX.signal);
+                                    }
+                                    else {
+                                        signal.forEach((_, index) => {
+                                            signal[index] = 2 * Math.random() - 1;
+                                        });
+                                    }
+                                });
+                            }
+                        });
+
+                        window.addEventListener("keypress", event => {
+                            if(event.key == 'l' || event.key == 'L') {
+                                const signal = (event.key == 'l')?
+                                    slide4WaveformX.signal :
+                                    slide4WaveformY.signal ;
+
+                                signal.forEach((_, index) => {
+                                    signal[index] = index;
+                                });
+                            }
+                        });
+
+                        var useCosine = true;
+
+                        window.addEventListener("keypress", event => {
+                            if(event.code.includes("Digit")) {
+                                const frequency = Number(event.code.replace("Digit", ''));
+                                const signal = isNaN(event.key)?
+                                    slide4WaveformY.signal :
+                                    slide4WaveformX.signal ;
+                                const length = signal.length;
+
+                                const waveform = useCosine?
+                                    Signal.cos(frequency, signal.length) :
+                                    Signal.sin(frequency, signal.length) ;
+                                signal.copy(waveform);
+                            }
+                            else if(event.key == 's') {
+                                useCosine = !useCosine;
+                                if(!clearedGrid)
+                                    drawGrid();
+                            }
+                        });
+
+                        window.addEventListener("keypress", event => {
+                            if(event.key == 'p') {
+                                slide4WaveformX.signal.permute();
+                            }
+                        });
+
+                        window.X = X;
+
+                        slide4WaveformX.addEventListener("load", event => event.target.signal.copy(X));
+                        slide4WaveformY.addEventListener("load", event => event.target.signal.copy(Y));
+                        
+                        const slide4Waveform = document.getElementById("slide4Waveform");
+                        const slide4Segmented = document.getElementById("slide4Segmented");
+
+                        const slide4Grid = document.getElementById("slide4Grid");
+
+                        var isCrossConvolution = false;
+                        const operations = {
+                            convolution : (signalX, signalY) => signalX.convolve(signalY),
+                            crossConvolution : (signalX, signalY) => signalX.crossConvolve(signalY),
+                        }
+                        const toggleConvolution = () => {
+                            isCrossConvolution = !isCrossConvolution;
+                            convolutionTitle.innerText = isCrossConvolution?
+                                "Convolution" :
+                                "Cross Convolution";
+                            const operation = isCrossConvolution?
+                                operations.crossConvolution :
+                                operations.convolution;
+                            slide4Grid._operateCallback = operation;
+                        }
+                        window.addEventListener("keypress", event => {
+                            if(event.key == 'c')
+                                toggleConvolution();
+                        });
+
+                        [slide4WaveformX, slide4SegmentedX, slide4WaveformY, slide4SegmentedY].forEach((signalElement, _index) => {
+                            ["mouseenter", "mouseout"].forEach(eventName => {
+                                signalElement.addEventListener(`${eventName}-value`, event => {
+                                    const index = Number(event.path[0].dataset.index);
+                                    const gridIndex = (_index < 2)?
+                                        [index, undefined] :
+                                        [undefined, index];
+
+                                    slide4Grid.get(...gridIndex).forEach(gridElement => {
+                                        gridElement.dispatchEvent(new CustomEvent(`${eventName}-value`, {
+                                            composed : true,
+                                        }));
+                                    });
+                                });
+                            });
+                        });
+
+
+
+                        [slide4Waveform, slide4Segmented, slide4Grid].forEach(signalElement => {
+                            ["mouseenter", "mouseout"].forEach((eventName, index) => {
+                                signalElement.addEventListener(`${eventName}-value`, event => {
+                                    const elements = (signalElement instanceof SignalGridElement)?
+                                        getElements(event, isCrossConvolution) :
+                                        getGridElements(event, isCrossConvolution);
+                                    
+                                    elements.forEach(element => {
+                                        if(index == 0)
+                                            element.dataset.hover = true;
+                                        else
+                                            delete element.dataset.hover;
+                                    })
+                                });
+                            });
+                        });
+
+                        /*
+                        slide4Waveform.addEventListener("mouseenter-value", event => {
+                            getGridElements(event, isCrossConvolution).forEach(element => element.dataset.hover = true);
+                        });
+                        slide4Waveform.addEventListener("mouseout-value", event => {
+                            getGridElements(event, isCrossConvolution).forEach(element => delete element.dataset.hover);
+                        });
+
+                        slide4Segmented.addEventListener("mouseenter-value", event => {
+                            getGridElements(event, isCrossConvolution).forEach(element => element.dataset.hover = true);
+                        });
+                        slide4Segmented.addEventListener("mouseout-value", event => {
+                            getGridElements(event, isCrossConvolution).forEach(element => delete element.dataset.hover);
+                        });
+
+                        slide4Grid.addEventListener("mouseenter-value", event => {
+                            getElements(event, isCrossConvolution).forEach(valueElement => valueElement.dataset.hover = true)
+                        });
+                        slide4Grid.addEventListener("mouseout-value", event => {
+                            getElements(event, isCrossConvolution).forEach(valueElement => delete valueElement.dataset.hover)
+                        });
+                        */
+
+                        /*
+                        var signalY;
+                        window.addEventListener("keypress", event => {
+                            if(signalY == undefined) signalY = slide4WaveformY.signal;
+                            
+                            if(event.key == 'a') {
+                                if(signalY == slide4WaveformY.signal) {
+                                    slide4WaveformY.signal = slide4SegmentedY.signal = slide4Grid.signals.y = slide4WaveformX.signal;
+                                }
+                                else {
+                                    slide4WaveformY.signal = slide4SegmentedY.signal = slide4Grid.signals.y = signalY;
+                                }
+                            }
+                        })
+                        */
+
+                        const slide4WaveformDFTReal = document.getElementById("slide4WaveformDFTReal");
+                        const slide4SegmentedDFTReal = document.getElementById("slide4SegmentedDFTReal");
+
+                        const slide4WaveformDFTImaginary = document.getElementById("slide4WaveformDFTImaginary");
+                        const slide4SegmentedDFTImaginary = document.getElementById("slide4SegmentedDFTImaginary");
+
+                        const updateDFT = () => {
+                            slide4WaveformDFTReal.signal.copy(slide4WaveformX.signal.DFT(true));
+                            slide4WaveformDFTImaginary.signal.copy(slide4WaveformX.signal.DFT(false));
+                        };
+
+                        const DFTCallback = () => {
+                            updateDFT();
+                            requestAnimationFrame(DFTCallback);
+                        };
+                        requestAnimationFrame(DFTCallback);
+
+                        var DFTMode = 0;
+                        window.addEventListener("keypress", event => {
+                            if(event.key == 'd' || event.key == 'D') {
+                                DFTMode += event.shiftKey? -1:1;
+                                DFTMode %= 4;
+
+                                if(!clearedGrid) {
+                                    drawGrid();
+                                }
+                            }
+                        });
+                        const getGridElementsDFT = (frequency, isReal = true) => {
+                            const elements = {
+                                positive : [],
+                                negative : [],
+                            };
+                            const signalLength = slide4Grid.signals.x.length;
+                            
+                            switch(DFTMode) {
+                                case 0:
+                                    // diagonals
+                                    slide4Grid.signals.x.forEach((_, index) => {
+                                        var indexY = index;
+                                        indexY *= frequency;
+                                        indexY %= signalLength;
+
+                                        if(!isReal) {
+                                            indexY += signalLength;
+                                            indexY -= signalLength/4;
+                                            indexY %= signalLength;
+                                        }
+                                        elements.positive[index] = slide4Grid.get(index, indexY);
+                                    });
+                                    break;
+                                case 1:
+                                    // wrap (second time is negative)
+                                    slide4Grid.signals.x.forEach((_, index) => {
+                                        var indexY = index;
+                                        indexY *= frequency;
+                                        indexY %= signalLength;
+
+                                        // NEW
+                                        const array = (indexY < signalLength/2)?
+                                            elements.positive :
+                                            elements.negative ;
+                                        indexY %= Math.floor(signalLength/2);
+
+                                        if(!isReal) {
+                                            indexY += signalLength;
+                                            indexY -= signalLength/4;
+                                            indexY %= signalLength;
+                                        }
+                                        array[index] = slide4Grid.get(index, indexY);
+                                    });
+                                    break;
+                                case 2:
+                                    // serpentine (come down negative) 
+                                    slide4Grid.signals.x.forEach((_, index) => {
+                                        var indexY = index;
+                                        indexY *= frequency;
+                                        indexY %= signalLength;
+
+                                        var array = (indexY < signalLength/2)?
+                                            elements.positive :
+                                            elements.negative ;
+                                        indexY %= Math.floor(signalLength/2);
+                                        
+                                        // NEW
+                                        if(indexY > (signalLength/4)) {
+                                            if(isReal)
+                                                array = (array == elements.positive)?
+                                                    elements.negative :
+                                                    elements.positive ;
+                                        }
+
+                                        if(indexY > (signalLength/4))
+                                            indexY = (signalLength/4) - (indexY % (signalLength/4));
+
+                                        if(!isReal) {
+                                            indexY += signalLength;
+                                            indexY -= signalLength/4;
+                                            indexY %= signalLength;
+                                        }
+                                        array[index] = slide4Grid.get(index, indexY);
+                                    });
+                                    break;
+                                case 3:
+                                    // permutation
+                                    var smallestPowerOf2 = 0;
+                                    while(Math.pow(2, smallestPowerOf2) < signalLength)
+                                        smallestPowerOf2++;
+
+                                    slide4Grid.signals.x.forEach((_, index) => {
+                                        var indexY = index;
+                                        indexY *= frequency;
+                                        indexY %= signalLength;
+                                        var array = (indexY < signalLength/2)?
+                                            elements.positive :
+                                            elements.negative ;
+                                        indexY %= Math.floor(signalLength/2);
+
+
+                                        if(indexY > (signalLength/4)) {
+                                            if(isReal)
+                                                array = (array == elements.positive)?
+                                                    elements.negative :
+                                                    elements.positive ;
+                                        }
+
+                                        if(indexY > (signalLength/4))
+                                            indexY = (signalLength/4) - (indexY % (signalLength/4));
+
+                                        // NEW
+                                        var indexX = index;
+                                        {
+                                            var binaryString = index.toString(2);
+                                            const padding = ('0').repeat(smallestPowerOf2 - binaryString.length);
+                                            binaryString = padding.concat(binaryString);
+                                            const binaryArray = Array.from(binaryString);
+                                            binaryArray.reverse();
+                                            const reverseBinaryString = binaryArray.join('');
+                                            indexX = parseInt(reverseBinaryString, 2);
+                                        }
+
+                                        if(!isReal) {
+                                            indexY += signalLength;
+                                            indexY -= signalLength/4;
+                                            indexY %= signalLength;
+                                        }
+                                        array[index] = slide4Grid.get(indexX, indexY);
+                                    });
+                                    break;
+                                default:
+                                    break;
+                            }
+
+                            return elements;
+                        }
+                        
+                        /*
+                        [slide4WaveformDFTReal, slide4SegmentedDFTReal].forEach(signalElement => {
+                            ["mouseenter", "mouseout"].forEach((eventName, index) => {
+                                signalElement.addEventListener(`${eventName}-value`, event => {
+                                    const frequency = Number(event.path[0].dataset.index);
+                                    const gridElements = getGridElementsDFT(frequency, true);
+                                    gridElements.positive.forEach(element => {
+                                        if(index == 0)
+                                            element.dataset.hover = true;
+                                        else
+                                            delete element.dataset.hover;
+                                    });
+                                    gridElements.negative.forEach(element => {
+                                        // make this red or something?
+                                        if(index == 0)
+                                            element.dataset.hover = true;
+                                        else
+                                            delete element.dataset.hover;
+                                    });
+                                });
+                            });
+                        });
+
+                        [slide4WaveformDFTImaginary, slide4SegmentedDFTImaginary].forEach(signalElement => {
+                            ["mouseenter", "mouseout"].forEach((eventName, index) => {
+                                signalElement.addEventListener(`${eventName}-value`, event => {
+                                    const frequency = Number(event.path[0].dataset.index);
+                                    const gridElements = getGridElementsDFT(frequency, false);
+                                    gridElements.positive.forEach(element => {
+                                        if(index == 0)
+                                            element.dataset.hover = true;
+                                        else
+                                            delete element.dataset.hover;
+                                    });
+                                    gridElements.negative.forEach(element => {
+                                        // make this red or something?
+                                        if(index == 0)
+                                            element.dataset.hover = true;
+                                        else
+                                            delete element.dataset.hover;
+                                    });
+                                });
+                            });
+                        });
+                        */
+
+                        window.addEventListener("keypress", event => {
+                            const signal = slide4WaveformY.signal;
+                            if(event.key == 'b') {
+                                signal.forEach((_, index) => {
+                                    signal[index] = (index < signal.length/2)?
+                                        index :
+                                        signalLength - index;
+                                    signal[index] *= signal[index];
+                                });
+                            }
+                            else if(event.hey == 'h') {
+                                // hipass kernel?
+                            }
+                        });
+
+                        [slide4WaveformDFTReal, slide4SegmentedDFTReal, slide4WaveformDFTImaginary, slide4SegmentedDFTImaginary].forEach((signalElement, index) => {
+                            const isReal = (index < 2);
+
+                            ["mouseenter", "mouseout"].forEach((eventName, index) => {
+                                signalElement.addEventListener(`${eventName}-value`, event => {
+                                    const frequency = Number(event.path[0].dataset.index);
+                                    const gridElements = getGridElementsDFT(frequency, isReal);
+                                    gridElements.positive.forEach(element => {
+                                        const span = element.querySelector(`span[data-frequency="${frequency}"]`);
+
+                                        if(index == 0) {
+                                            element.dataset.hover = true;
+                                            element.dataset.dftSign = "positive";
+
+                                            if(span !== null)
+                                                span.dataset.hover = true;
+                                        }
+                                        else {
+                                            delete element.dataset.hover;
+                                            delete element.dataset.dftSign;
+
+                                            if(span !== null)
+                                                delete span.dataset.hover;
+                                        }
+                                    });
+                                    gridElements.negative.forEach(element => {
+                                        const span = element.querySelector(`span[data-frequency="${frequency}"]`);
+
+                                        if(index == 0) {
+                                            element.dataset.hover = true;
+                                            element.dataset.dftSign = "negative";
+
+                                            if(span !== null)
+                                                span.dataset.hover = true;
+                                        }
+                                        else {
+                                            delete element.dataset.hover;
+                                            delete element.dataset.dftSign;
+
+                                            if(span !== null)
+                                                delete span.dataset.hover;
+                                        }
+                                    });
+                                });
+                            });
+                        });
+
+                        var clearedGrid = true;
+                        const clearGrid = () => {
+                            slide4Grid.get(undefined, undefined).flat().forEach(element => element.innerText = '');
+                            clearedGrid = true;
+                        }
+                        const drawGrid = () => {
+                            clearGrid();
+                            slide4Grid.signals.x.forEach((_, frequency) => {
+                                const elements = getGridElementsDFT(frequency, useCosine);
+                                elements.positive.forEach(element => {
+                                    if(Number(getComputedStyle(element).width.replace('px', '')) > 10 && Number(getComputedStyle(element).height.replace('px', '')) > 10)
+                                        element.innerHTML += `<span data-sign="positive" data-frequency="${frequency}">${frequency},</span>`;
+                                });
+                                elements.negative.forEach(element => {
+                                    if(Number(getComputedStyle(element).width.replace('px', '')) > 10 && Number(getComputedStyle(element).height.replace('px', '')) > 10)
+                                        element.innerHTML += `<span data-sign="negative" data-frequency="${frequency}">${frequency},</span>`;
+                                });
+                            });
+                            clearedGrid = false;
+                        }
+                        window.addEventListener("keypress", event => {
+                            if(event.key == 'g') {
+                                if(!clearedGrid) {
+                                    clearGrid();
+                                }
+                                else {
+                                    drawGrid();
+                                }
+                            }
+                        });
+
+                        createRevealer(
+                            //[slide4WaveformX, slide4SegmentedX],
+                            [slide4WaveformY, slide4SegmentedY],
+                            [slide4Grid],
+                            [convolutionTitle, slide4Waveform, slide4Segmented],
+                            [slide4TitleDFTReal, slide4WaveformDFTReal, slide4SegmentedDFTReal],
+                            [slide4TitleDFTImaginary, slide4WaveformDFTImaginary, slide4SegmentedDFTImaginary],
+                        )
+                    }
+                </script>
+            </div>
+        </div>
+    </body>
+
+    <script>
+        const slides = Array.from(document.getElementById("slides").children);
+        if(!slides.some(slide => slide.dataset.currentSlide == "true"))
+            slides[0].dataset.currentSlide = true;
+
+        window.addEventListener("keydown", event => {
+            const currentIndex = slides.findIndex(child => child.dataset.currentSlide == "true");
+            var newIndex = currentIndex;
+            switch(event.key) {
+                case "ArrowLeft":
+                    if(currentIndex > 0) {
+                        newIndex--;
+                    }
+                    break;
+                case "ArrowRight":
+                    if(currentIndex < slides.length-1) {
+                        newIndex++;
+                    }
+                    break;
+                default:
+                    break;
+            }
+
+            if(newIndex !== currentIndex) {
+                delete slides[currentIndex].dataset.currentSlide;
+                slides[newIndex].dataset.currentSlide = "true";
+            }
+        });
+    </script>
+
+    <script>
+        class SignalElement extends HTMLElement {
+            constructor() {
+                super();
+                this.signal = new Signal();
+
+                this.dataset.isSignal = true;
+
+                this.attachShadow({mode : "open"});
+
+                window.addEventListener("mouseup", event => {
+                    SignalElement.elements().forEach(signalElement => {
+                        Array.from(signalElement.shadowRoot.querySelectorAll(`[data-selected="true"]`)).forEach(element => delete element.dataset.selected);
+                    });
+                    delete this.selectedIndex;
+                });
+
+                this.dispatchEvent(new CustomEvent("load", {
+                    bubbles : false,
+                }));
+
+                this.addEventListener("mouseenter-value", event => {
+                    event.preventDefault();
+                });
+                this.addEventListener("mouseout-value", event => {
+                    event.preventDefault();
+                });
+            }
+
+            static get observedAttributes() {
+                return [
+                    "signal", "bind-signal",
+                    "direction",
+                ];
+            }
+
+            attributeChangedCallback(name, oldValue, newValue) {
+                switch(name) {
+                    case "signal":
+                        const values = JSON.parse(newValue);
+                        const signal = new Signal(...values);
+                        this.signal.copy(signal);
+                        break;
+                    case "bind-signal":
+                        const signalElement = document.getElementById(newValue);
+
+                        if(signalElement !== null && signalElement.signal instanceof Signal) {
+                            this.signal = signalElement.signal;
+                        }
+                        else {
+                            signalElement.addEventListener("load", event => {
+                                this.signal = signalElement.signal;
+                            });
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            update() {}
+            get(index) {}
+
+            static elements() {
+                return Array.from(document.querySelectorAll(`[data-is-signal="true"]`))
+            }
+            static aliases(signal) {
+                return this.elements().filter(element => {
+                    if(element.signal == signal)
+                        return true;
+                    else if(element instanceof SignalGridElement)
+                        return Object.values(element.signals).includes(signal);
+                });
+            }
+            static get(signal, index) {
+                return this.aliases(signal).map(element => element.get(index, signal)).flat();
+            }
+        }
+    </script>
+
+    <script>
+        class WaveformSignalElement extends SignalElement {
+            constructor() {
+                super();
+
+                this.shadowRoot.innerHTML = `
+                    <style>
+                        #positive {
+                            align-items : flex-end;
+                            border-style : none;
+                        }
+                        #negative {
+                            align-items : flex-start;
+                            border-style : none;
+                        }
+                        #positive, #negative {
+                            flex : 1;
+                            display : flex;
+                            flex-direction : row;
+                            border-color : black;
+                            border-width : 1.2px;
+                        }
+                        #positive > div {
+                            background-color : green;
+                        }
+                        #negative > div {
+                            background-color : red;
+                        }
+                        #negative > div, #positive > div {
+                            flex : 1;
+                            border-style : solid;
+                            border-width : 1.1px;
+                        }
+                        #negative > [data-hover="true"], #positive > [data-hover="true"] {
+                            opacity : 0.5;
+                        }
+                        #positive > [data-selected="true"], #negative > [data-selected="true"] {
+                            opacity : 0.8;
+                        }
+                    </style>
+                `;
+
+                ["positive", "negative"].forEach(id => {
+                    const sign = document.createElement("div");
+                    sign.id = id;
+                    this.shadowRoot.appendChild(sign);
+                    this[id] = sign;
+                });
+
+                this.addEventListener("mousedown", event => {
+                    const interpolation = (getComputedStyle(this).flexDirection == "column")?
+                        getComputedStyle(this.positive).flexDirection == "row"?
+                            event.offsetX/this.clientWidth : 1-event.offsetX/this.clientWidth :
+                        getComputedStyle(this.positive).flexDirection == "column"?
+                            event.offsetY/this.clientHeight : 1-event.offsetY/this.clientHeight ;
+
+                    //const interpolation = event.offsetX/this.clientWidth
+                    const index = Math.floor(this.signal.length * interpolation);
+                    this.selectedIndex = index;
+                    SignalElement.get(this.signal, index).forEach(element => element.dataset.selected = true)
+                });
+                window.addEventListener("mousemove", event => {
+                    if(event.buttons > 0 && this.selectedIndex !== undefined) {
+                        this.signal[this.selectedIndex] += getComputedStyle(this).flexDirection == "column"?
+                            -event.movementY/10 :
+                            -event.movementX/10 ;
+                    }
+                });
+            }
+
+            attributeChangedCallback(name, oldValue, newValue) {
+                SignalElement.prototype.attributeChangedCallback.call(this, ...arguments);
+                
+                switch(name) {
+                    case "direction":
+                        var direction1, direction2;
+
+                        switch(newValue) {
+                            case "right":
+                                direction1 = "column";
+                                direction2 = "row";
+                                break;
+                            case "left":
+                                direction1 = "column";
+                                direction2 = "row-reverse";
+                                break;
+                            case "down":
+                                direction1 = "row";
+                                direction2 = "column";
+                                break;
+                            case "up":
+                                direction1 = "row";
+                                direction2 = "column-reverse";
+                                break;
+                        }
+
+                        this.style.flexDirection = direction1;
+                        this.positive.style.flexDirection = this.negative.style.flexDirection = direction2;
+
+                        this.update();
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+
+            update() {
+                const unsignedMax = this.signal.unsignedMax();
+
+                this.signal.forEach((value, index) => {
+                    ["positive", "negative"].forEach(sign => {                        
+                        const valueElement = this[sign].querySelector(`[data-index="${index}"]`) || document.createElement("div");
+                        if(!this[sign].contains(valueElement)) {
+                            valueElement.dataset.index = index;
+                            valueElement.addEventListener("mouseenter", event => {
+                                SignalElement.get(this.signal, index).forEach(element => element.dataset.hover = true);
+                                valueElement.dispatchEvent(new CustomEvent("mouseenter-value", {
+                                    composed : true,
+                                }));
+                            });
+                            valueElement.addEventListener("mouseout", event => {
+                                SignalElement.get(this.signal, index).forEach(element => delete element.dataset.hover);
+                                valueElement.dispatchEvent(new CustomEvent("mouseout-value", {
+                                    composed : true,
+                                }));
+                            });
+
+                            this[sign].appendChild(valueElement);
+                        }
+
+                        if((sign == "positive" && value >= 0) || (sign == "negative" && value < 0)) {
+                            const size = (value !== 0)?
+                                100 * Math.abs(value / unsignedMax) :
+                                0;
+
+                            if(getComputedStyle(this).flexDirection == "column") {
+                                valueElement.style.height = `${size}%`;
+                                valueElement.style.width = '';
+                            }
+                            else {
+                                valueElement.style.width = `${size}%`;
+                                valueElement.style.height = '';
+                            }
+
+                            valueElement.dataset.visible = "true";
+                        }
+                        else {
+                            if(getComputedStyle(this).flexDirection == "column") {
+                                valueElement.style.height = `0%`;
+                                valueElement.style.width = '';
+                            }
+                            else {
+                                valueElement.style.width = `0%`;
+                                valueElement.style.height = '';
+                            }
+
+                            delete valueElement.dataset.visible;
+                        }
+                    });
+                });
+            }
+
+            get(index) {
+                return this.shadowRoot.querySelector(`[data-index="${index}"][data-visible="true"]`);
+            }
+        }
+
+        customElements.define("signal-waveform", WaveformSignalElement);
+    </script>
+
+    <script>
+        class SegmentedSignalElement extends SignalElement {
+            constructor() {
+                super();
+
+                this.shadowRoot.innerHTML = `
+                    <style>
+                        [data-sign="positive"] {
+                            background-color : green;
+                        }
+                        [data-sign="negative"] {
+                            background-color : red;
+                        }
+                        [data-sign] {
+                            border-style : solid;
+                            border-color : black;
+                            border-width : 1.5px;
+                        }
+                        [data-sign]:last-child {
+                            border-style : solid;
+                        }
+                        [data-hover="true"] {
+                            opacity : 0.5;
+                        }
+                        [data-selected="true"] {
+                            opacity : 0.8;
+                        }
+                    </style>
+                `;
+
+                window.addEventListener("mousemove", event => {
+                    if(event.buttons > 0 && this.selectedIndex !== undefined) {
+                        this.signal[this.selectedIndex] += getComputedStyle(this).flexDirection.includes("column")?
+                            -event.movementY/10 :
+                            event.movementX/10 ;
+                    }
+                });
+            }
+
+            attributeChangedCallback(name, oldValue, newValue) {
+                SignalElement.prototype.attributeChangedCallback.call(this, ...arguments);
+                
+                switch(name) {
+                    case "direction":
+                        switch(newValue) {
+                            case "right":
+                                this.style.flexDirection = "row";
+                                break;
+                            case "left":
+                                this.style.flexDirection = "row-reverse";
+                                break;
+                            case "down":
+                                this.style.flexDirection = "column";
+                                break;
+                            case "up":
+                                this.style.flexDirection = "column-reverse";
+                                break;
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            update() {
+                const unsignedIntegral = this.signal.unsignedIntegral();
+
+                this.signal.forEach((value, index) => {
+                    const valueElement = this.shadowRoot.querySelector(`[data-index="${index}"]`) || document.createElement("div");
+                    if(!this.shadowRoot.contains(valueElement)) {
+                        valueElement.dataset.index = index;
+
+                        valueElement.addEventListener("mousedown", event => {
+                            this.selectedIndex = index;
+                            SignalElement.get(this.signal, index).forEach(element => element.dataset.selected = true)
+                        });
+
+                        valueElement.addEventListener("mouseenter", event => {
+                            SignalElement.get(this.signal, index).forEach(element => element.dataset.hover = true);
+                            valueElement.dispatchEvent(new CustomEvent("mouseenter-value", {
+                                composed : true,
+                            }));
+                        });
+
+                        valueElement.addEventListener("mouseout", event => {
+                            SignalElement.get(this.signal, index).forEach(element => delete element.dataset.hover);
+                            valueElement.dispatchEvent(new CustomEvent("mouseout-value", {
+                                composed : true,
+                            }));
+                        });
+                        
+
+                        this.shadowRoot.appendChild(valueElement);
+                    }
+
+                    valueElement.dataset.sign = (value >= 0)?
+                        "positive" :
+                        "negative" ;
+
+                    const length = (value !== 0)?
+                        100 * Math.abs(value/unsignedIntegral) :
+                        0;
+                    valueElement.style.flex = `${length}%`;
+                });
+            }
+
+            get(index) {
+                return this.shadowRoot.querySelector(`[data-index="${index}"]`);
+            }
+        }
+
+        customElements.define("signal-segmented", SegmentedSignalElement);
+    </script>
+
+    <script>
+        class SignalGridElement extends SignalElement {
+            constructor() {
+                super();
+
+                this.signals = {
+                    x : new Signal(),
+                    y : new Signal(),
+                };
+
+                this._operateCallback = (signalX, signalY) => signalX.convolve(signalY);
+
+                this.shadowRoot.innerHTML = `
+                    <style>
+                        [data-index-x][data-index-y] {
+                            border-color : black;
+                            border-width : 2px;
+                            border-style : inset;
+                            word-wrap : break-word;
+                        }
+                        [data-sign="positive"] {
+                            background-color : green;
+                        }
+                        [data-sign="negative"] {
+                            background-color : red;
+                        }
+                        [data-hover="true"] {
+                            opacity : 0.5;
+                        }
+                        [data-hover-x="true"][data-hover-y="true"] {
+                            opacity : 0.5;
+                        }
+                        [data-selected="true"] {
+                            opacity : 0.8;
+                        }
+                        span[data-sign] {
+                            background-color : white;
+                            font-weight : bold;
+                        }
+                        span[data-sign="positive"] {
+                            color : green;
+                        }
+                        span[data-sign="negative"] {
+                            color : red;
+                        }
+                        [data-dft-sign="positive"] {
+                            background-color : green;
+                        }
+                        [data-dft-sign="negative"] {
+                            background-color : red;
+                        }
+                        span[data-hover="true"] {
+                            color : white;
+                            opacity : 1;
+                            background-color : black;
+                        }
+                        
+                    </style>
+                `;
+
+                window.addEventListener("mousemove", event => {
+                    if(event.buttons > 0 && this.selectedIndex !== undefined) {
+                        this.signals.x[this.selectedIndex.x] += event.movementX/10;
+                        this.signals.y[this.selectedIndex.y] += -event.movementY/10;
+                    }
+                });
+            }
+
+            static get observedAttributes() {
+                return [
+                    "signal-x", "signal-y",
+                    "bind-signal-x", "bind-signal-y",
+                    "direction-x", "direction-y",
+                ];
+            }
+
+            attributeChangedCallback(name, oldValue, newValue) {
+                switch(name) {
+                    case "signal-x":
+                    case "signal-y":
+                        {
+                            const values = JSON.parse(newValue);
+                            const signal = new Signal(...values);
+                            const id = name.split('-')[1];
+                            this.signals[id].copy(signal);    
+                        }
+                        break;
+                    case "bind-signal-x":
+                    case "bind-signal-y":
+                        {
+                            const signalElement = document.getElementById(newValue);
+                            const signalKey = name.split('-')[2];
+                            if(signalElement !== undefined && signalElement.signal instanceof Signal) {
+                                this.signals[signalKey] = signalElement.signal;
+                            }
+                        }
+                        break;
+                    case "direction-x":
+                    case "direction-y":
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            update() {
+                const unsignedIntegral = {
+                    x : this.signals.x.unsignedIntegral(),
+                    y : this.signals.y.unsignedIntegral(),
+                };
+
+                const gridTemplate = {
+                    columns : this.signals.x.abs().map(value => `${100*value/unsignedIntegral.x}%`),
+                    rows : this.signals.y.abs().map(value => `${100*value/unsignedIntegral.y}%`),
+                };
+
+                if(this.getAttribute("direction-x") == "left")
+                    gridTemplate.columns.reverse();
+                if(this.getAttribute("direction-y") == "up")
+                    gridTemplate.rows.reverse();
+
+                this.style.gridTemplateColumns =  gridTemplate.columns.join(' ');
+                this.style.gridTemplateRows = gridTemplate.rows.join(' ');
+
+                const length = {
+                    x : this.signals.x.length,
+                    y : this.signals.y.length,
+                };
+
+                this.signals.x.forEach((valueX, indexX) => {
+                    this.signals.y.forEach((valueY, indexY) => {
+                        const cell = this.get(indexX, indexY) || document.createElement("div");
+                        if(!this.shadowRoot.contains(cell)) {
+                            cell.dataset.indexX = indexX;
+                            cell.dataset.indexY = indexY;
+
+                            cell.style.gridColumn = indexX+1;
+                            cell.style.gridRow = indexY+1;
+
+                            cell.addEventListener("mousedown", event => {
+                                this.selectedIndex = {
+                                    x : indexX,
+                                    y : indexY,
+                                };
+                                [...SignalElement.get(this.signals.x, indexX), ...SignalElement.get(this.signals.y, indexY)].forEach(element => element.dataset.selected = true);
+                            });
+
+                            // could use the "getIndex" method of the "operate" method to deduce the this.signal output binders...
+                            cell.addEventListener("mouseenter", event => {
+                                SignalElement.get(this.signals.x, indexX).forEach(element => {
+                                    if(element.dataset.indexX !== undefined)
+                                        element.dataset.hoverX = true;
+                                    else
+                                        element.dataset.hover = true;
+                                });
+                                SignalElement.get(this.signals.y, indexY).forEach(element => {
+                                    if(element.dataset.indexY !== undefined)
+                                        element.dataset.hoverY = true;
+                                    else
+                                        element.dataset.hover = true;
+                                });
+                                cell.dispatchEvent(new CustomEvent("mouseenter-value", {
+                                    composed : true,
+                                }));
+                            });
+                            cell.addEventListener("mouseout", event => {
+                                SignalElement.get(this.signals.x, indexX).forEach(element => {
+                                    if(element.dataset.indexX !== undefined)
+                                        delete element.dataset.hoverX;
+                                    else
+                                        delete element.dataset.hover;
+                                });
+                                SignalElement.get(this.signals.y, indexY).forEach(element => {
+                                    if(element.dataset.indexY !== undefined)
+                                        delete element.dataset.hoverY;
+                                    else
+                                        delete element.dataset.hover;
+                                });
+                                cell.dispatchEvent(new CustomEvent("mouseout-value", {
+                                    composed : true,
+                                }));
+                            });
+
+                            this.shadowRoot.appendChild(cell);
+                        }
+
+                        cell.style.gridColumn = (this.getAttribute("direction-x") == "left")?
+                            (length.x-indexX) :
+                            indexX+1 ;
+
+                        cell.style.gridRow = (this.getAttribute("direction-y") == "up")?
+                            (length.y-indexY) :
+                            indexY+1;
+
+                        cell.dataset.sign = (valueX*valueY >= 0)?
+                            "positive" :
+                            "negative" ;
+                    });
+                });
+            }
+
+            get(index_or_indexX, signal_or_indexY) {
+                return (signal_or_indexY instanceof Signal)?
+                    this._getSignal(...arguments):
+                    this._getXY(...arguments);
+            }
+
+            _getSignal(index, signal) {
+                if(this.signals.x == signal)
+                    return this._getXY(index, undefined);
+                else if(this.signals.y == signal)
+                    return this._getXY(undefined, index)
+                else {
+                    return [];
+                }
+            }
+            _getXY(indexX, indexY) {
+                if(indexX !== undefined && indexY !== undefined)
+                    return this.shadowRoot.querySelector(`[data-index-x="${indexX}"][data-index-y="${indexY}"]`);
+                else if(indexX !== undefined)
+                    return Array.from(this.signals.y.map((value, indexY) => this.get(indexX, indexY)));
+                else
+                    return Array.from(this.signals.x.map((value, indexX) => this.get(indexX, indexY)));
+            }
+
+            operate(getIndex, getValue) {
+                const operation = (getIndex !== undefined && getValue !== undefined)?
+                    this.signals.x.operate(this.signals.y, getIndex, getValue):
+                    this._operateCallback(this.signals.x, this.signals.y);
+                this.signal.copy(operation);
+            }
+            convolve() {
+                const convolution = this.signals.x.convolve(this.signals.y);
+                this.signal.copy(convolution);
+            }
+        }
+
+        customElements.define("signal-grid", SignalGridElement);
+    </script>
+
+    <script>
+        const animationFrameCallback = () => {
+            SignalElement.elements().map(element => {
+                element.update();
+                if(element instanceof SignalGridElement) {
+                    element.operate();
+                }
+            });
+            requestAnimationFrame(animationFrameCallback);
+        }
+        requestAnimationFrame(animationFrameCallback);
+    </script>
+</html>
